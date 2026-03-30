@@ -11,6 +11,7 @@ import type { WalletMonitor } from '../services/wallet-monitor.js';
 import type { MirrorTrader } from '../services/mirror-trader.js';
 import type { PositionManager } from '../services/position-manager.js';
 import type { PnlTracker } from '../services/pnl-tracker.js';
+import type { HeliusWebhookManager } from '../services/helius-webhook.js';
 import type { KolWalletDoc, KolTradeDoc } from '../types.js';
 
 export function setupApiRoutes(
@@ -19,6 +20,7 @@ export function setupApiRoutes(
   mirrorTrader: MirrorTrader,
   positionManager: PositionManager,
   pnlTracker: PnlTracker,
+  heliusWebhook?: HeliusWebhookManager,
 ): void {
 
   // === KOL Management ===
@@ -42,6 +44,7 @@ export function setupApiRoutes(
         stats: { totalTrades: 0, wins: 0, losses: 0, totalPnlSOL: 0, avgReturnPct: 0, lastTradeAt: null },
       });
       res.json({ success: true, message: `Added ${label}` });
+      heliusWebhook?.refreshAddresses();
     } catch (err) { res.status(500).json({ error: String(err) }); }
   });
 
@@ -54,6 +57,7 @@ export function setupApiRoutes(
       const col = await getCollection<KolWalletDoc>('kol_wallets');
       await col.updateOne({ address: req.params.address }, { $set: updates });
       res.json({ success: true });
+      if (typeof req.body.enabled === 'boolean') heliusWebhook?.refreshAddresses();
     } catch (err) { res.status(500).json({ error: String(err) }); }
   });
 
@@ -62,6 +66,7 @@ export function setupApiRoutes(
       const col = await getCollection<KolWalletDoc>('kol_wallets');
       await col.updateOne({ address: req.params.address }, { $set: { enabled: false } });
       res.json({ success: true });
+      heliusWebhook?.refreshAddresses();
     } catch (err) { res.status(500).json({ error: String(err) }); }
   });
 

@@ -16,10 +16,12 @@ import { logger } from './utils/logger.js';
 import { deriveSolanaKeypair } from './utils/wallet.js';
 import { getDb, getCollection } from './utils/mongodb.js';
 import { config, getPositionSizeForTier } from './config.js';
+import { sendTelegramAlert } from './utils/telegram.js';
 import { WalletMonitor } from './services/wallet-monitor.js';
 import { MirrorTrader } from './services/mirror-trader.js';
 import { PositionManager } from './services/position-manager.js';
 import { PnlTracker } from './services/pnl-tracker.js';
+import { HeliusWebhookManager } from './services/helius-webhook.js';
 import { setupApiRoutes } from './routes/api-routes.js';
 import type { KolTrackerStateDoc } from './types.js';
 
@@ -75,6 +77,7 @@ async function main() {
   const mirrorTrader = new MirrorTrader(connection, keypair, pnlTracker);
   const positionManager = new PositionManager(connection, mirrorTrader, pnlTracker);
   const walletMonitor = new WalletMonitor(connection, mirrorTrader);
+  const heliusWebhook = new HeliusWebhookManager(connection, mirrorTrader);
 
   // 4. Express server
   const app = express();
@@ -82,25 +85,60 @@ async function main() {
   app.use('/public', express.static(join(__dirname, 'public')));
   app.get('/', (_req, res) => res.sendFile(join(__dirname, 'public', 'kol-tracker.html')));
 
-  setupApiRoutes(app, walletMonitor, mirrorTrader, positionManager, pnlTracker);
+  // Helius webhook receiver endpoint
+  app.post('/api/helius/webhook', async (req, res) => {
+    // Verify auth header
+    const authHeader = req.headers['authorization'];
+    if (config.heliusWebhookSecret && authHeader !== config.heliusWebhookSecret) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const events = Array.isArray(req.body) ? req.body : [req.body];
+    // Respond immediately so Helius doesn't retry
+    res.status(200).json({ received: events.length });
+
+    // Process async
+    heliusWebhook.handleWebhookEvent(events).catch(err => {
+      logger.error(`[Helius] Webhook processing error: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  });
+
+  setupApiRoutes(app, walletMonitor, mirrorTrader, positionManager, pnlTracker, heliusWebhook);
 
   app.get('/api/health', async (_req, res) => {
     const state = await stateCol.findOne({ _id: 'kol_tracker_state' as any });
+    const currentBalance = await connection.getBalance(keypair.publicKey);
     res.json({
       status: 'ok', uptime: process.uptime(),
-      wallet: keypair.publicKey.toBase58(), balanceSOL,
+      wallet: keypair.publicKey.toBase58(),
+      balanceSOL: currentBalance / LAMPORTS_PER_SOL,
       currentTier: state?.currentTier ?? 0,
       positionSize: getPositionSizeForTier(state?.currentTier ?? 0),
+      mode: heliusWebhook.isConfigured() ? 'webhook' : 'polling',
       monitoring: walletMonitor.isRunning(),
     });
   });
 
-  app.listen(config.port, () => {
+  const server = app.listen(config.port, () => {
     logger.info(`[MemeScope] Dashboard: http://localhost:${config.port}/`);
   });
 
-  // 5. Start monitoring
-  await walletMonitor.start();
+  // 5. Start monitoring — Helius webhooks if configured, polling fallback
+  if (heliusWebhook.isConfigured()) {
+    const webhookUrl = `http://localhost:${config.port}/api/helius/webhook`;
+    const ok = await heliusWebhook.setupWebhook(webhookUrl);
+    if (ok) {
+      logger.info('[MemeScope] Using Helius webhooks (sub-second detection)');
+    } else {
+      logger.info('[MemeScope] Helius webhook setup failed — falling back to polling');
+      await walletMonitor.start();
+    }
+  } else {
+    logger.info('[MemeScope] No Helius API key — using polling mode');
+    await walletMonitor.start();
+  }
+
   positionManager.start();
 
   logger.info('[MemeScope] All systems online.');
@@ -110,10 +148,23 @@ async function main() {
     logger.info('[MemeScope] Shutting down...');
     walletMonitor.stop();
     positionManager.stop();
+    await heliusWebhook.cleanup();
+    server.close();
     process.exit(0);
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
+
+  // Alert on uncaught errors instead of crashing silently
+  process.on('uncaughtException', async (err) => {
+    logger.error(`[MemeScope] Uncaught exception: ${err.message}`);
+    await sendTelegramAlert(`CRASH: Uncaught exception\n${err.message}`);
+  });
+  process.on('unhandledRejection', async (reason) => {
+    const msg = reason instanceof Error ? reason.message : String(reason);
+    logger.error(`[MemeScope] Unhandled rejection: ${msg}`);
+    await sendTelegramAlert(`ERROR: Unhandled rejection\n${msg}`);
+  });
 }
 
 main().catch((err) => {

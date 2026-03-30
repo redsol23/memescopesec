@@ -1,5 +1,21 @@
 node_modules/
 dist/
 logs/
-.env
 *.log
+
+# Secrets — NEVER commit these
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_*
+*.secret
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

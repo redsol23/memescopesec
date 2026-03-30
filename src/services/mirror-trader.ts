@@ -22,9 +22,14 @@ const {
 
 import { logger } from '../utils/logger.js';
 import { getCollection } from '../utils/mongodb.js';
+import { sendTelegramAlert } from '../utils/telegram.js';
+import { getTokenMetadata } from '../utils/token-metadata.js';
 import { config, getPositionSizeForTier, calculateTier } from '../config.js';
 import type { ParsedPumpTrade, KolWalletDoc, KolTradeDoc, KolTrackerStateDoc } from '../types.js';
 import type { PnlTracker } from './pnl-tracker.js';
+
+const MAX_SELL_RETRIES = 3;
+const SELL_RETRY_DELAY_MS = 2000;
 
 const PUMPFUN_FRONTEND_ACCOUNT = new PublicKey('DhobWTy4RX64VBwcML9e53gpXqbWDG3NoveR5Mn58seh');
 const BUY_DISCRIMINATOR = Buffer.from([102, 6, 61, 18, 1, 218, 235, 234]);
@@ -86,11 +91,16 @@ export class MirrorTrader {
       result = await this.buyViaJupiter(trade.tokenMint, positionSize);
     }
 
+    // Fetch token metadata
+    const meta = await getTokenMetadata(trade.tokenMint);
+    const tokenSymbol = meta?.symbol || trade.tokenMint.slice(0, 6);
+
     if (!result.success) {
       logger.error(`[MirrorTrader] Mirror buy failed: ${result.error}`);
+      await sendTelegramAlert(`Buy FAILED for ${kol.label}'s call on $${tokenSymbol}\n${result.error}`);
       await tradesCol.insertOne({
         kolAddress: kol.address, kolLabel: kol.label, tokenMint: trade.tokenMint,
-        status: 'failed', entrySignature: trade.signature, mirrorSignature: '',
+        tokenSymbol, status: 'failed', entrySignature: trade.signature, mirrorSignature: '',
         entryAmountSOL: positionSize, entryTokenAmount: 0, entryPricePerToken: 0,
         entryAt: new Date(), exits: [], realizedPnlSOL: 0, unrealizedPnlSOL: 0,
         currentPricePerToken: 0, lastPriceUpdate: new Date(), returnPct: 0,
@@ -104,7 +114,7 @@ export class MirrorTrader {
 
     await tradesCol.insertOne({
       kolAddress: kol.address, kolLabel: kol.label, tokenMint: trade.tokenMint,
-      status: 'open', entrySignature: trade.signature, mirrorSignature: result.signature || '',
+      tokenSymbol, status: 'open', entrySignature: trade.signature, mirrorSignature: result.signature || '',
       entryAmountSOL: positionSize, entryTokenAmount: tokenAmount, entryPricePerToken: pricePerToken,
       entryAt: new Date(), exits: [], realizedPnlSOL: 0, unrealizedPnlSOL: 0,
       currentPricePerToken: pricePerToken, lastPriceUpdate: new Date(), returnPct: 0,
@@ -124,17 +134,39 @@ export class MirrorTrader {
     trade: KolTradeDoc, tokenAmount: number,
     reason: 'target1' | 'target2' | 'time_limit' | 'manual',
   ): Promise<{ success: boolean; solReceived?: number; signature?: string }> {
-    logger.info(`[MirrorTrader] Selling ${tokenAmount.toFixed(2)} of ${trade.tokenMint.slice(0, 8)}... (${reason})`);
+    const sym = trade.tokenSymbol || trade.tokenMint.slice(0, 8);
+    logger.info(`[MirrorTrader] Selling ${tokenAmount.toFixed(2)} $${sym} (${reason})`);
 
-    let result: { success: boolean; signature?: string; amountOut?: number; error?: string };
-    try {
-      result = await this.sellViaPumpSwap(trade.tokenMint, tokenAmount);
-    } catch (err) {
-      logger.warn(`[MirrorTrader] PumpSwap sell failed, trying Jupiter: ${err instanceof Error ? err.message : String(err)}`);
-      result = await this.sellViaJupiter(trade.tokenMint, tokenAmount);
+    let result: { success: boolean; signature?: string; amountOut?: number; error?: string } = { success: false };
+    let lastError = '';
+
+    for (let attempt = 1; attempt <= MAX_SELL_RETRIES; attempt++) {
+      try {
+        result = await this.sellViaPumpSwap(trade.tokenMint, tokenAmount);
+        if (result.success) break;
+      } catch (err) {
+        logger.warn(`[MirrorTrader] PumpSwap sell attempt ${attempt} failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      // Jupiter fallback
+      try {
+        result = await this.sellViaJupiter(trade.tokenMint, tokenAmount);
+        if (result.success) break;
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+        logger.warn(`[MirrorTrader] Jupiter sell attempt ${attempt} failed: ${lastError}`);
+      }
+
+      if (attempt < MAX_SELL_RETRIES) {
+        await new Promise(r => setTimeout(r, SELL_RETRY_DELAY_MS * attempt));
+      }
     }
 
-    if (!result.success) { logger.error(`[MirrorTrader] Sell failed: ${result.error}`); return { success: false }; }
+    if (!result.success) {
+      logger.error(`[MirrorTrader] Sell FAILED after ${MAX_SELL_RETRIES} retries: ${lastError}`);
+      await sendTelegramAlert(`Sell FAILED for $${sym} after ${MAX_SELL_RETRIES} retries\n${lastError}`);
+      return { success: false };
+    }
 
     const solReceived = result.amountOut || 0;
     const tradesCol = await getCollection<KolTradeDoc>('kol_trades');

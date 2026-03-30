@@ -30,6 +30,14 @@ export const config = {
   pumpFunBondingCurveProgramId: '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P',
 
   positionCheckIntervalMs: parseInt(process.env.KOL_TRACKER_POSITION_CHECK_MS || '60000', 10),
+
+  // Helius
+  heliusApiKey: process.env.HELIUS_API_KEY || '',
+  heliusWebhookSecret: process.env.HELIUS_WEBHOOK_SECRET || '',
+
+  // Telegram (errors only)
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
+  telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
 };
 
 export function getPositionSizeForTier(tier: number): number {
