@@ -6,7 +6,7 @@ import type { TierConfig, ExitStrategy } from './types.js';
 
 export const config = {
   port: parseInt(process.env.KOL_TRACKER_PORT || '3002', 10),
-  walletIndex: parseInt(process.env.KOL_TRACKER_WALLET_INDEX || '4', 10),
+  walletIndex: parseInt(process.env.KOL_TRACKER_WALLET_INDEX || '0', 10),
   pollIntervalMs: parseInt(process.env.KOL_TRACKER_POLL_INTERVAL_MS || '5000', 10),
   maxSlippageBps: parseInt(process.env.KOL_TRACKER_MAX_SLIPPAGE_BPS || '300', 10),
 
