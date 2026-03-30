@@ -22,6 +22,7 @@ import { MirrorTrader } from './services/mirror-trader.js';
 import { PositionManager } from './services/position-manager.js';
 import { PnlTracker } from './services/pnl-tracker.js';
 import { HeliusWebhookManager } from './services/helius-webhook.js';
+import { CreatorFeeCollector } from './services/creator-fee-collector.js';
 import { setupApiRoutes } from './routes/api-routes.js';
 import type { KolTrackerStateDoc } from './types.js';
 
@@ -78,6 +79,7 @@ async function main() {
   const positionManager = new PositionManager(connection, mirrorTrader, pnlTracker);
   const walletMonitor = new WalletMonitor(connection, mirrorTrader);
   const heliusWebhook = new HeliusWebhookManager(connection, mirrorTrader);
+  const feeCollector = new CreatorFeeCollector(connection, keypair);
 
   // 4. Express server
   const app = express();
@@ -104,7 +106,7 @@ async function main() {
     });
   });
 
-  setupApiRoutes(app, walletMonitor, mirrorTrader, positionManager, pnlTracker, heliusWebhook);
+  setupApiRoutes(app, walletMonitor, mirrorTrader, positionManager, pnlTracker, heliusWebhook, feeCollector);
 
   app.get('/api/health', async (_req, res) => {
     const state = await stateCol.findOne({ _id: 'kol_tracker_state' as any });
@@ -141,6 +143,14 @@ async function main() {
 
   positionManager.start();
 
+  // Start creator fee collection if agent token is configured
+  if (feeCollector.isConfigured()) {
+    feeCollector.start();
+    logger.info(`[MemeScope] Creator fee collector active (${config.agentBuybackBps / 100}% buyback)`);
+  } else {
+    logger.info('[MemeScope] No AGENT_TOKEN_MINT — fee collector disabled');
+  }
+
   logger.info('[MemeScope] All systems online.');
   if (process.send) process.send('ready');
 
@@ -148,6 +158,7 @@ async function main() {
     logger.info('[MemeScope] Shutting down...');
     walletMonitor.stop();
     positionManager.stop();
+    feeCollector.stop();
     await heliusWebhook.cleanup();
     server.close();
     process.exit(0);

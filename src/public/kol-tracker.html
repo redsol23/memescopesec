@@ -90,6 +90,23 @@
       </tr></thead><tbody id="trades-table-body"></tbody></table></div>
     </div>
 
+    <!-- Agent Token Stats -->
+    <div class="card mb-8" id="agent-section" style="display:none">
+      <div class="flex items-center justify-between p-4 border-b border-slate-700">
+        <h2 class="text-lg font-semibold text-white">Agent Token</h2>
+        <button onclick="collectFees()" class="btn-primary text-sm">Collect Fees Now</button>
+      </div>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 p-4">
+        <div><div class="stat-label">Buyback Split</div><div class="text-white font-bold" id="agent-buyback">--</div></div>
+        <div><div class="stat-label">Payment Vault</div><div class="text-white font-bold" id="agent-payment">--</div></div>
+        <div><div class="stat-label">Buyback Vault</div><div class="text-white font-bold" id="agent-buyback-vault">--</div></div>
+        <div><div class="stat-label">Withdraw Vault</div><div class="text-white font-bold" id="agent-withdraw">--</div></div>
+      </div>
+      <div class="px-4 pb-3">
+        <span class="text-xs text-slate-500">Token: <span id="agent-mint" class="font-mono">--</span></span>
+      </div>
+    </div>
+
     <div class="card p-4">
       <h2 class="text-lg font-semibold text-white mb-4">Add KOL Wallet</h2>
       <div class="flex gap-3">
@@ -126,7 +143,9 @@
     async function toggleKol(a,e){await fetch(API+'/api/kols/'+a,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e})});fetchKols()}
     async function sellPosition(id){if(!confirm('Sell entire remaining position?'))return;try{const r=await fetch(API+'/api/trades/'+id+'/sell',{method:'POST'});const d=await r.json();if(d.success)alert('Sold! Received '+(d.solReceived||0).toFixed(4)+' SOL');else alert('Failed: '+(d.error||'unknown'));refreshAll()}catch(e){alert('Error: '+e)}}
     async function refreshKolscan(){try{const r=await fetch(API+'/api/kolscan/refresh');const d=await r.json();alert(`Kolscan: ${d.added} added, ${d.updated} updated, ${d.total} total`);fetchKols()}catch(e){alert('Failed: '+e)}}
-    function refreshAll(){fetchStats();fetchKols();fetchOpenPositions();fetchRecentTrades()}
+    async function fetchAgentStats(){try{const r=await fetch(API+'/api/agent/stats');if(!r.ok)return;const s=await r.json();if(!s.configured)return;document.getElementById('agent-section').style.display='';document.getElementById('agent-buyback').textContent=(s.buybackBps/100)+'% buyback';document.getElementById('agent-payment').textContent=s.paymentVault||'0';document.getElementById('agent-buyback-vault').textContent=s.buybackVault||'0';document.getElementById('agent-withdraw').textContent=s.withdrawVault||'0';document.getElementById('agent-mint').textContent=s.tokenMint?s.tokenMint.slice(0,8)+'...'+s.tokenMint.slice(-4):'--'}catch(e){}}
+    async function collectFees(){try{const r=await fetch(API+'/api/agent/collect',{method:'POST'});const d=await r.json();if(d.withdrawn)alert('Collected! Withdrawn: '+(d.withdrawnAmount||0).toFixed(6));else alert('Collection: '+(d.error||'nothing to collect'));fetchAgentStats()}catch(e){alert('Error: '+e)}}
+    function refreshAll(){fetchStats();fetchKols();fetchOpenPositions();fetchRecentTrades();fetchAgentStats()}
     refreshAll();fetchHealth();setInterval(refreshAll,5000);setInterval(fetchHealth,30000);
   </script>
 </body>

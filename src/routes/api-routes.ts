@@ -12,6 +12,7 @@ import type { MirrorTrader } from '../services/mirror-trader.js';
 import type { PositionManager } from '../services/position-manager.js';
 import type { PnlTracker } from '../services/pnl-tracker.js';
 import type { HeliusWebhookManager } from '../services/helius-webhook.js';
+import type { CreatorFeeCollector } from '../services/creator-fee-collector.js';
 import type { KolWalletDoc, KolTradeDoc } from '../types.js';
 
 export function setupApiRoutes(
@@ -21,6 +22,7 @@ export function setupApiRoutes(
   positionManager: PositionManager,
   pnlTracker: PnlTracker,
   heliusWebhook?: HeliusWebhookManager,
+  feeCollector?: CreatorFeeCollector,
 ): void {
 
   // === KOL Management ===
@@ -114,5 +116,22 @@ export function setupApiRoutes(
   app.get('/api/kolscan/refresh', async (_req, res) => {
     try { res.json(await refreshKolsFromKolscan()); }
     catch (err) { res.status(500).json({ error: String(err) }); }
+  });
+
+  // === Agent Token / Fee Collector ===
+
+  app.get('/api/agent/stats', async (_req, res) => {
+    try {
+      if (!feeCollector) { res.json({ configured: false }); return; }
+      res.json(await feeCollector.getStats());
+    } catch (err) { res.status(500).json({ error: String(err) }); }
+  });
+
+  app.post('/api/agent/collect', async (_req, res) => {
+    try {
+      if (!feeCollector?.isConfigured()) { res.status(400).json({ error: 'Agent token not configured' }); return; }
+      const result = await feeCollector.collect();
+      res.json(result);
+    } catch (err) { res.status(500).json({ error: String(err) }); }
   });
 }
