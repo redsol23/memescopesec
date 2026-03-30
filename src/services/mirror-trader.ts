@@ -4,7 +4,8 @@
 
 import {
   Connection, PublicKey, Transaction, TransactionInstruction,
-  sendAndConfirmTransaction, LAMPORTS_PER_SOL, SystemProgram, Keypair, VersionedTransaction,
+  sendAndConfirmTransaction, LAMPORTS_PER_SOL, SystemProgram, Keypair,
+  VersionedTransaction, ComputeBudgetProgram,
 } from '@solana/web3.js';
 import {
   getAccount, getAssociatedTokenAddress,
@@ -216,11 +217,7 @@ export class MirrorTrader {
     const sa = (this.pumpAmmSdk as any).swapAccounts(swapState);
     const instructions = this.buildBuyInstructions(sa, swapState, buyCalc.base, buyCalc.maxQuote);
 
-    const tx = new Transaction().add(...instructions);
-    tx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
-    tx.feePayer = this.keypair.publicKey;
-
-    const signature = await sendAndConfirmTransaction(this.connection, tx, [this.keypair], { commitment: 'confirmed' });
+    const signature = await this.sendFastTransaction(instructions);
     return { success: true, signature, amountOut: buyCalc.base.toNumber() };
   }
 
@@ -243,12 +240,43 @@ export class MirrorTrader {
     const sa = (this.pumpAmmSdk as any).swapAccounts(swapState);
     const instructions = this.buildSellInstructions(sa, swapState, baseAmount, sellCalc.minQuote);
 
-    const tx = new Transaction().add(...instructions);
-    tx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
-    tx.feePayer = this.keypair.publicKey;
-
-    const signature = await sendAndConfirmTransaction(this.connection, tx, [this.keypair], { commitment: 'confirmed' });
+    const signature = await this.sendFastTransaction(instructions);
     return { success: true, signature, amountOut: sellCalc.uiQuote.toNumber() / LAMPORTS_PER_SOL };
+  }
+
+  /**
+   * Send transaction with priority fees and fast confirmation.
+   * Prepends compute budget instructions, sends with skipPreflight for speed,
+   * then confirms asynchronously.
+   */
+  private async sendFastTransaction(instructions: TransactionInstruction[]): Promise<string> {
+    // Prepend priority fee + compute budget
+    const priorityIxs = [
+      ComputeBudgetProgram.setComputeUnitLimit({ units: config.computeUnitLimit }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: config.priorityFeeMicroLamports }),
+    ];
+
+    const tx = new Transaction().add(...priorityIxs, ...instructions);
+    const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash('confirmed');
+    tx.recentBlockhash = blockhash;
+    tx.feePayer = this.keypair.publicKey;
+    tx.sign(this.keypair);
+
+    // Send with skipPreflight for speed — lands faster
+    const signature = await this.connection.sendRawTransaction(tx.serialize(), {
+      skipPreflight: true,
+      maxRetries: 3,
+      preflightCommitment: 'confirmed',
+    });
+
+    logger.info(`[MirrorTrader] Tx sent: ${signature.slice(0, 16)}... (confirming async)`);
+
+    // Confirm async — don't block the trading loop
+    this.connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed')
+      .then(() => logger.info(`[MirrorTrader] Tx confirmed: ${signature.slice(0, 16)}...`))
+      .catch(err => logger.warn(`[MirrorTrader] Tx confirm failed: ${signature.slice(0, 16)}... ${err instanceof Error ? err.message : String(err)}`));
+
+    return signature;
   }
 
   // === Jupiter Fallback ===

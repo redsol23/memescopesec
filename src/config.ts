@@ -32,6 +32,10 @@ export const config = {
 
   positionCheckIntervalMs: parseInt(process.env.KOL_TRACKER_POSITION_CHECK_MS || '60000', 10),
 
+  // Transaction speed
+  priorityFeeMicroLamports: parseInt(process.env.PRIORITY_FEE_MICRO_LAMPORTS || '50000', 10), // 50k = ~0.005 SOL per tx
+  computeUnitLimit: parseInt(process.env.COMPUTE_UNIT_LIMIT || '200000', 10),
+
   // Pump.fun Tokenized Agent
   agentTokenMint: process.env.AGENT_TOKEN_MINT || '',
   agentBuybackBps: parseInt(process.env.AGENT_BUYBACK_BPS || '5000', 10), // 50% default
