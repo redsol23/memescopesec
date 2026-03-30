@@ -40,6 +40,7 @@ export const config = {
   // Helius
   heliusApiKey: process.env.HELIUS_API_KEY || '',
   heliusWebhookSecret: process.env.HELIUS_WEBHOOK_SECRET || '',
+  heliusWebhookUrl: process.env.HELIUS_WEBHOOK_URL || '',
 
   // Telegram (errors only)
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',

@@ -132,7 +132,7 @@ async function main() {
 
   // 5. Start monitoring — Helius webhooks if configured, polling fallback
   if (heliusWebhook.isConfigured()) {
-    const webhookUrl = `http://localhost:${config.port}/api/helius/webhook`;
+    const webhookUrl = config.heliusWebhookUrl || `http://localhost:${config.port}/api/helius/webhook`;
     const ok = await heliusWebhook.setupWebhook(webhookUrl);
     if (ok) {
       logger.info('[MemeScope] Using Helius webhooks (sub-second detection)');
