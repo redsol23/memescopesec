@@ -13,6 +13,7 @@ import type { PositionManager } from '../services/position-manager.js';
 import type { PnlTracker } from '../services/pnl-tracker.js';
 import type { HeliusWebhookManager } from '../services/helius-webhook.js';
 import type { CreatorFeeCollector } from '../services/creator-fee-collector.js';
+import type { KolAnalyzer } from '../services/kol-analyzer.js';
 import type { KolWalletDoc, KolTradeDoc } from '../types.js';
 
 export function setupApiRoutes(
@@ -23,6 +24,7 @@ export function setupApiRoutes(
   pnlTracker: PnlTracker,
   heliusWebhook?: HeliusWebhookManager,
   feeCollector?: CreatorFeeCollector,
+  kolAnalyzer?: KolAnalyzer,
 ): void {
 
   // === KOL Management ===
@@ -133,6 +135,25 @@ export function setupApiRoutes(
       if (!feeCollector?.isConfigured()) { res.status(400).json({ error: 'Agent token not configured' }); return; }
       const result = await feeCollector.collect();
       res.json(result);
+    } catch (err) { res.status(500).json({ error: String(err) }); }
+  });
+
+  // === SEC Analysis ===
+
+  app.get('/api/analysis', async (_req, res) => {
+    try {
+      if (!kolAnalyzer) { res.status(400).json({ error: 'Analyzer not available' }); return; }
+      const result = await kolAnalyzer.analyzeAll();
+      res.json(result);
+    } catch (err) { res.status(500).json({ error: String(err) }); }
+  });
+
+  app.get('/api/analysis/:address', async (req, res) => {
+    try {
+      if (!kolAnalyzer) { res.status(400).json({ error: 'Analyzer not available' }); return; }
+      const analysis = await kolAnalyzer.analyzeKol(req.params.address);
+      if (!analysis) { res.status(404).json({ error: 'KOL not found' }); return; }
+      res.json(analysis);
     } catch (err) { res.status(500).json({ error: String(err) }); }
   });
 }

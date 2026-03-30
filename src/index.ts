@@ -23,6 +23,7 @@ import { PositionManager } from './services/position-manager.js';
 import { PnlTracker } from './services/pnl-tracker.js';
 import { HeliusWebhookManager } from './services/helius-webhook.js';
 import { CreatorFeeCollector } from './services/creator-fee-collector.js';
+import { KolAnalyzer } from './services/kol-analyzer.js';
 import { setupApiRoutes } from './routes/api-routes.js';
 import type { KolTrackerStateDoc } from './types.js';
 
@@ -80,6 +81,7 @@ async function main() {
   const walletMonitor = new WalletMonitor(connection, mirrorTrader);
   const heliusWebhook = new HeliusWebhookManager(connection, mirrorTrader);
   const feeCollector = new CreatorFeeCollector(connection, keypair);
+  const kolAnalyzer = new KolAnalyzer(connection);
 
   // 4. Express server
   const app = express();
@@ -106,7 +108,7 @@ async function main() {
     });
   });
 
-  setupApiRoutes(app, walletMonitor, mirrorTrader, positionManager, pnlTracker, heliusWebhook, feeCollector);
+  setupApiRoutes(app, walletMonitor, mirrorTrader, positionManager, pnlTracker, heliusWebhook, feeCollector, kolAnalyzer);
 
   app.get('/api/health', async (_req, res) => {
     const state = await stateCol.findOne({ _id: 'kol_tracker_state' as any });
