@@ -39,8 +39,8 @@ export const config = {
   // Pump.fun Tokenized Agent
   agentTokenMint: process.env.AGENT_TOKEN_MINT || '',
   agentBuybackBps: parseInt(process.env.AGENT_BUYBACK_BPS || '5000', 10), // 50% default
-  agentFeeCollectIntervalMs: parseInt(process.env.AGENT_FEE_COLLECT_INTERVAL_MS || '300000', 10), // 5min
-  agentCurrencyMint: process.env.AGENT_CURRENCY_MINT || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
+  agentFeeCollectIntervalMs: parseInt(process.env.AGENT_FEE_COLLECT_INTERVAL_MS || '1800000', 10), // 30min
+  agentCurrencyMint: process.env.AGENT_CURRENCY_MINT || 'So11111111111111111111111111111111111111112', // wSOL
 
   // Helius
   heliusApiKey: process.env.HELIUS_API_KEY || '',
