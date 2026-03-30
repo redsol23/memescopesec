@@ -57,46 +57,46 @@ async function scrapeTimeframe(timeframe: 1 | 7 | 30): Promise<ScrapedKol[]> {
       try {
         const container = $(el);
 
-        // Name from the profile link heading
-        const name = container.find('a h1').first().text().trim();
+        // Address from profile link href (/account/ADDRESS?timeframe=N)
+        const profileHref = container.find('a[href*="/account/"]').first().attr('href') || '';
+        const addrMatch = profileHref.match(/\/account\/([1-9A-HJ-NP-Za-km-z]{32,44})/);
+        const address = addrMatch ? addrMatch[1] : '';
+        if (!address) return;
+
+        // Name from h1 inside the profile link (skip rank numbers)
+        let name = '';
+        container.find('a[href*="/account/"] h1').each((_, h) => {
+          const text = $(h).text().trim();
+          if (text && !/^\d+$/.test(text) && !text.includes('Sol') && !text.includes('$')) {
+            if (!name) name = text;
+          }
+        });
         if (!name) return;
 
-        // Address from profile link href (/profile/ADDRESS)
-        const profileHref = container.find('a').first().attr('href') || '';
-        const address = profileHref.replace('/profile/', '').trim();
-        if (!address || address.length < 32) return;
-
-        // PnL section
+        // PnL from the profit section
         const profitEl = container.find('[class*="leaderboard_totalProfitNum__"]');
-        const profitTexts = profitEl.find('h1');
-        const solText = profitTexts.eq(0).text().trim().replace(/[+,]/g, '');
-        const usdText = profitTexts.eq(1).text().trim().replace(/[$,]/g, '');
+        const profitH1s = profitEl.find('h1');
+        const solText = profitH1s.eq(0).text().trim().replace(/[+,Sol\s]/g, '');
+        const usdText = profitH1s.eq(1).text().trim().replace(/[$(),\s]/g, '');
         const pnlSOL = parseFloat(solText) || 0;
         const pnlUSD = parseFloat(usdText) || 0;
 
-        // Win/Loss - look for win/loss text patterns
+        // Wins/Losses from colored <p> tags in the remove-mobile div
+        // Pattern: <p style="color:var(--buy-color)">WINS</p>/<p style="color:var(--sell-color)">LOSSES</p>
         let wins = 0, losses = 0;
-        const allText = container.text();
-        const winMatch = allText.match(/(\d+)\s*(?:wins?|W)/i);
-        const lossMatch = allText.match(/(\d+)\s*(?:loss(?:es)?|L)/i);
-        if (winMatch) wins = parseInt(winMatch[1]);
-        if (lossMatch) losses = parseInt(lossMatch[1]);
+        const wlDiv = container.find('div.remove-mobile');
+        if (wlDiv.length) {
+          const buyP = wlDiv.find('p[style*="buy-color"]');
+          const sellP = wlDiv.find('p[style*="sell-color"]');
+          if (buyP.length) wins = parseInt(buyP.text().trim()) || 0;
+          if (sellP.length) losses = parseInt(sellP.text().trim()) || 0;
+        }
 
-        // Also try to parse from structured elements
-        container.find('[class*="stat"], [class*="win"], [class*="loss"]').each((_, statEl) => {
-          const text = $(statEl).text().trim();
-          const num = parseInt(text);
-          if (!isNaN(num)) {
-            if (text.toLowerCase().includes('w') || $(statEl).attr('class')?.includes('win')) wins = num;
-            if (text.toLowerCase().includes('l') || $(statEl).attr('class')?.includes('loss')) losses = num;
-          }
-        });
-
-        // Twitter link
-        const twitterUrl = container.find('a[href*="twitter.com"], a[href*="x.com"]').attr('href');
+        // Twitter — look for link wrapping twitter logo or direct x.com/twitter.com links
+        const twitterUrl = container.find('a[href*="twitter.com"], a[href*="x.com"]').attr('href') || undefined;
 
         // Profile picture
-        const pfpUrl = container.find('img').first().attr('src');
+        const pfpUrl = container.find('img[alt="pfp"]').attr('src') || undefined;
 
         kols.push({
           name,
