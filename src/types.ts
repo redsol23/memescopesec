@@ -25,6 +25,24 @@ export interface KolStats {
   lastTradeAt: Date | null;
 }
 
+export type KolCategory = 'established' | 'rising' | 'hot' | 'manual';
+
+export interface KolscanMetrics {
+  dailyPnlSOL: number;
+  weeklyPnlSOL: number;
+  monthlyPnlSOL: number;
+  dailyWins: number;
+  dailyLosses: number;
+  weeklyWins: number;
+  weeklyLosses: number;
+  monthlyWins: number;
+  monthlyLosses: number;
+  dailyRank?: number;
+  weeklyRank?: number;
+  monthlyRank?: number;
+  lastScraped: Date;
+}
+
 export interface KolWalletDoc {
   _id?: ObjectId;
   address: string;            // Solana pubkey
@@ -32,7 +50,11 @@ export interface KolWalletDoc {
   enabled: boolean;
   addedAt: Date;
   source: 'kolscan' | 'manual';
+  category: KolCategory;
   kolscanRank?: number;
+  kolscanMetrics?: KolscanMetrics;
+  twitterUrl?: string;
+  pfpUrl?: string;
   exitStrategy: ExitStrategy;
   stats: KolStats;
 }

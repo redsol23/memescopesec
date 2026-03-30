@@ -42,6 +42,7 @@ export function setupApiRoutes(
       if (await col.findOne({ address })) { res.status(409).json({ error: 'KOL already exists' }); return; }
       await col.insertOne({
         address, label, enabled: true, addedAt: new Date(), source: 'manual',
+        category: 'manual',
         exitStrategy: { ...config.defaultExitStrategy },
         stats: { totalTrades: 0, wins: 0, losses: 0, totalPnlSOL: 0, avgReturnPct: 0, lastTradeAt: null },
       });

@@ -35,6 +35,10 @@
     .tier-2 { background: #1a3a2a; color: #4ade80; }
     .tier-3 { background: #3a2e1a; color: #fbbf24; }
     .tier-4 { background: #3a1a2a; color: #f472b6; }
+    .cat-established { background: #1a3a2a; color: #4ade80; }
+    .cat-rising { background: #1e3a5f; color: #60a5fa; }
+    .cat-hot { background: #3a2e1a; color: #fbbf24; }
+    .cat-manual { background: #334155; color: #94a3b8; }
   </style>
 </head>
 <body class="min-h-screen p-6">
@@ -68,7 +72,7 @@
         <span class="text-sm text-slate-400" id="kol-count">0 KOLs</span>
       </div>
       <div class="overflow-x-auto"><table><thead><tr>
-        <th>KOL</th><th>Wallet</th><th>Trades</th><th>Win Rate</th><th>PnL (SOL)</th><th>Avg Return</th><th>Last Trade</th><th>Status</th><th>Actions</th>
+        <th>KOL</th><th>Category</th><th>Wallet</th><th>Kolscan PnL</th><th>Our Trades</th><th>Our Win Rate</th><th>Our PnL</th><th>Status</th><th>Actions</th>
       </tr></thead><tbody id="kol-table-body"></tbody></table></div>
     </div>
 
@@ -132,7 +136,9 @@
     async function fetchHealth(){try{const r=await fetch(API+'/api/health');if(r.ok){const h=await r.json();document.getElementById('mode-label').textContent=h.mode==='webhook'?'Webhook (fast)':'Polling'}}catch(e){}}
     async function fetchStats(){try{const r=await fetch(API+'/api/stats');const s=r.ok?await r.json():{};document.getElementById('stat-realized-pnl').innerHTML=`<span class="${pnlClass(s.totalRealizedPnlSOL)}">${fmtSOL(s.totalRealizedPnlSOL)}</span>`;document.getElementById('stat-unrealized-pnl').innerHTML=`<span class="${pnlClass(s.totalUnrealizedPnlSOL)}">${fmtSOL(s.totalUnrealizedPnlSOL)}</span>`;document.getElementById('stat-win-rate').innerHTML=`<span class="text-white">${s.winRate!=null?s.winRate.toFixed(0)+'%':'--'}</span>`;document.getElementById('stat-open-positions').textContent=s.openPositions??'--';document.getElementById('stat-tier').innerHTML=tierBadge(s.currentTier??0,s.currentPositionSizeSOL??0.01);document.getElementById('stat-balance').textContent=(s.walletBalanceSOL??0).toFixed(3)+' SOL'}catch(e){}}
 
-    async function fetchKols(){try{const r=await fetch(API+'/api/kols');const kols=r.ok?await r.json():[];document.getElementById('kol-count').textContent=kols.length+' KOLs';const tb=document.getElementById('kol-table-body');if(!kols.length){tb.innerHTML='<tr><td colspan="9" class="text-center text-slate-500 py-8">No KOLs added yet</td></tr>';return}tb.innerHTML=kols.map(k=>`<tr><td class="font-medium text-white">${k.label}</td><td class="font-mono text-xs text-slate-400">${shortAddr(k.address)}</td><td>${k.stats?.totalTrades??0}</td><td>${k.stats?.totalTrades>0?((k.stats.wins/k.stats.totalTrades)*100).toFixed(0)+'%':'--'}</td><td class="${pnlClass(k.stats?.totalPnlSOL)}">${fmtSOL(k.stats?.totalPnlSOL??0)}</td><td class="${pnlClass(k.stats?.avgReturnPct)}">${fmtPct(k.stats?.avgReturnPct)}</td><td class="text-slate-400 text-xs">${timeAgo(k.stats?.lastTradeAt)}</td><td>${k.enabled?'<span class="text-green-400 text-xs">Active</span>':'<span class="text-red-400 text-xs">Disabled</span>'}</td><td><button onclick="toggleKol('${k.address}',${!k.enabled})" class="btn-sm ${k.enabled?'bg-slate-600 text-white':'bg-green-700 text-white'}">${k.enabled?'Disable':'Enable'}</button></td></tr>`).join('')}catch(e){}}
+    function catBadge(c){const m={established:'cat-established',rising:'cat-rising',hot:'cat-hot',manual:'cat-manual'};return`<span class="badge ${m[c]||'cat-manual'}">${c||'manual'}</span>`}
+    function kolscanPnl(k){const m=k.kolscanMetrics;if(!m)return'--';const w=m.weeklyPnlSOL;return`<span class="${pnlClass(w)}">${fmtSOL(w)}</span><span class="text-xs text-slate-500"> /7d</span>`}
+    async function fetchKols(){try{const r=await fetch(API+'/api/kols');const kols=r.ok?await r.json():[];document.getElementById('kol-count').textContent=kols.length+' KOLs';const tb=document.getElementById('kol-table-body');if(!kols.length){tb.innerHTML='<tr><td colspan="9" class="text-center text-slate-500 py-8">No KOLs added yet</td></tr>';return}tb.innerHTML=kols.map(k=>`<tr><td class="font-medium text-white">${k.label}</td><td>${catBadge(k.category)}</td><td class="font-mono text-xs text-slate-400">${shortAddr(k.address)}</td><td>${kolscanPnl(k)}</td><td>${k.stats?.totalTrades??0}</td><td>${k.stats?.totalTrades>0?((k.stats.wins/k.stats.totalTrades)*100).toFixed(0)+'%':'--'}</td><td class="${pnlClass(k.stats?.totalPnlSOL)}">${fmtSOL(k.stats?.totalPnlSOL??0)}</td><td>${k.enabled?'<span class="text-green-400 text-xs">Active</span>':'<span class="text-red-400 text-xs">Disabled</span>'}</td><td><button onclick="toggleKol('${k.address}',${!k.enabled})" class="btn-sm ${k.enabled?'bg-slate-600 text-white':'bg-green-700 text-white'}">${k.enabled?'Disable':'Enable'}</button></td></tr>`).join('')}catch(e){}}
 
     async function fetchOpenPositions(){try{const r=await fetch(API+'/api/trades/open');const trades=r.ok?await r.json():[];const tb=document.getElementById('positions-table-body');if(!trades.length){tb.innerHTML='<tr><td colspan="8" class="text-center text-slate-500 py-6">No open positions</td></tr>';return}tb.innerHTML=trades.map(t=>{const rem=t.entryTokenAmount-(t.exits||[]).reduce((s,e)=>s+e.tokensSold,0);const cv=rem*(t.currentPricePerToken||0);return`<tr><td class="font-medium text-white">${t.kolLabel}</td><td class="font-mono text-xs">${(t.tokenSymbol?'$'+t.tokenSymbol:shortAddr(t.tokenMint))}</td><td>${t.entryAmountSOL.toFixed(4)}</td><td>${cv.toFixed(4)}</td><td class="${pnlClass(t.unrealizedPnlSOL)}"><b>${fmtSOL(t.unrealizedPnlSOL)}</b></td><td class="${pnlClass(t.returnPct)}">${fmtPct(t.returnPct)}</td><td class="text-slate-400 text-xs">${holdTime(t.entryAt)}</td><td><button onclick="sellPosition('${t._id}')" class="btn-danger">Sell</button></td></tr>`}).join('')}catch(e){}}
 
