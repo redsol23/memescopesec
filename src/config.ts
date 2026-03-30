@@ -2,6 +2,7 @@
  * MemeScope SEC — Configuration
  */
 
+import './env.js';
 import type { TierConfig, ExitStrategy } from './types.js';
 
 export const config = {

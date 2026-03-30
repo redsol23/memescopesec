@@ -5,8 +5,7 @@
  * mirrors trades with tiered position sizing, tracks PnL per KOL.
  */
 
-import dotenv from 'dotenv';
-dotenv.config();
+import './env.js';
 
 import express from 'express';
 import { fileURLToPath } from 'url';
