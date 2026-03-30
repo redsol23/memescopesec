@@ -56,16 +56,16 @@ export interface FeeCollectionResult {
 export class CreatorFeeCollector {
   private connection: Connection;
   private keypair: Keypair;
-  private tokenMint: PublicKey;
-  private currencyMint: PublicKey;
+  private tokenMint: PublicKey | null;
+  private currencyMint: PublicKey | null;
   private collectTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
 
   constructor(connection: Connection, keypair: Keypair) {
     this.connection = connection;
     this.keypair = keypair;
-    this.tokenMint = new PublicKey(config.agentTokenMint);
-    this.currencyMint = new PublicKey(config.agentCurrencyMint);
+    this.tokenMint = config.agentTokenMint ? new PublicKey(config.agentTokenMint) : null;
+    this.currencyMint = config.agentCurrencyMint ? new PublicKey(config.agentCurrencyMint) : null;
   }
 
   isConfigured(): boolean {
@@ -105,6 +105,7 @@ export class CreatorFeeCollector {
    * Run one collection cycle: distribute + withdraw.
    */
   async collect(): Promise<FeeCollectionResult> {
+    if (!this.tokenMint || !this.currencyMint) return { distributed: false, withdrawn: false };
     await loadSdk();
 
     const result: FeeCollectionResult = { distributed: false, withdrawn: false };
@@ -245,17 +246,17 @@ export class CreatorFeeCollector {
 
       // Get or create our ATA for the currency
       const receiverAta = await getAssociatedTokenAddress(
-        this.currencyMint, this.keypair.publicKey,
+        this.currencyMint!, this.keypair.publicKey,
       );
 
       // Ensure ATA exists
       const ataIx = createAssociatedTokenAccountIdempotentInstruction(
-        this.keypair.publicKey, receiverAta, this.keypair.publicKey, this.currencyMint,
+        this.keypair.publicKey, receiverAta, this.keypair.publicKey, this.currencyMint!,
       );
 
       const withdrawIx = await agent.withdraw({
         authority: this.keypair.publicKey,
-        currencyMint: this.currencyMint,
+        currencyMint: this.currencyMint!,
         receiverAta,
       });
 
