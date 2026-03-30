@@ -4,6 +4,7 @@
 
 import type { Express, Request, Response } from 'express';
 import { ObjectId } from 'mongodb';
+import { logger } from '../utils/logger.js';
 import { getCollection } from '../utils/mongodb.js';
 import { config } from '../config.js';
 import { refreshKolsFromKolscan } from '../services/kolscan-scraper.js';
@@ -14,6 +15,7 @@ import type { PnlTracker } from '../services/pnl-tracker.js';
 import type { HeliusWebhookManager } from '../services/helius-webhook.js';
 import type { CreatorFeeCollector } from '../services/creator-fee-collector.js';
 import type { KolAnalyzer } from '../services/kol-analyzer.js';
+import type { KolBacktester } from '../services/kol-backtester.js';
 import type { KolWalletDoc, KolTradeDoc } from '../types.js';
 
 export function setupApiRoutes(
@@ -25,6 +27,7 @@ export function setupApiRoutes(
   heliusWebhook?: HeliusWebhookManager,
   feeCollector?: CreatorFeeCollector,
   kolAnalyzer?: KolAnalyzer,
+  kolBacktester?: KolBacktester,
 ): void {
 
   // === KOL Management ===
@@ -154,6 +157,47 @@ export function setupApiRoutes(
       const analysis = await kolAnalyzer.analyzeKol(req.params.address);
       if (!analysis) { res.status(404).json({ error: 'KOL not found' }); return; }
       res.json(analysis);
+    } catch (err) { res.status(500).json({ error: String(err) }); }
+  });
+
+  // === Backtesting ===
+
+  app.post('/api/backtest', async (req, res) => {
+    try {
+      if (!kolBacktester) { res.status(400).json({ error: 'Backtester not available' }); return; }
+      const daysBack = parseInt(req.query.days as string) || 7;
+      const maxTxs = parseInt(req.query.maxTxs as string) || 200;
+      res.json({ status: 'started', message: 'Backtest running in background' });
+      // Run async — don't block the response
+      kolBacktester.backtestAll({ daysBack, maxTxs }).catch(err =>
+        logger.error(`[Backtest] Error: ${err instanceof Error ? err.message : String(err)}`)
+      );
+    } catch (err) { res.status(500).json({ error: String(err) }); }
+  });
+
+  app.get('/api/backtest/:address', async (req, res) => {
+    try {
+      if (!kolBacktester) { res.status(400).json({ error: 'Backtester not available' }); return; }
+      const daysBack = parseInt(req.query.days as string) || 7;
+      const profile = await kolBacktester.backtestKol(req.params.address, { daysBack });
+      if (!profile) { res.status(404).json({ error: 'KOL not found' }); return; }
+      res.json(profile);
+    } catch (err) { res.status(500).json({ error: String(err) }); }
+  });
+
+  app.get('/api/backtest/results', async (_req, res) => {
+    try {
+      const col = await getCollection('kol_strategy_profiles');
+      const profiles = await col.find().sort({ expectedWinRate: -1 }).toArray();
+      res.json(profiles);
+    } catch (err) { res.status(500).json({ error: String(err) }); }
+  });
+
+  app.post('/api/backtest/apply', async (_req, res) => {
+    try {
+      if (!kolBacktester) { res.status(400).json({ error: 'Backtester not available' }); return; }
+      const result = await kolBacktester.applyRecommendations();
+      res.json(result);
     } catch (err) { res.status(500).json({ error: String(err) }); }
   });
 }
