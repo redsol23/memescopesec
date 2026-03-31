@@ -36,11 +36,9 @@ export const config = {
   priorityFeeMicroLamports: parseInt(process.env.PRIORITY_FEE_MICRO_LAMPORTS || '50000', 10), // 50k = ~0.005 SOL per tx
   computeUnitLimit: parseInt(process.env.COMPUTE_UNIT_LIMIT || '200000', 10),
 
-  // Pump.fun Tokenized Agent
+  // Creator Fee Collection
   agentTokenMint: process.env.AGENT_TOKEN_MINT || '',
-  agentBuybackBps: parseInt(process.env.AGENT_BUYBACK_BPS || '5000', 10), // 50% default
-  agentFeeCollectIntervalMs: parseInt(process.env.AGENT_FEE_COLLECT_INTERVAL_MS || '1800000', 10), // 30min
-  agentCurrencyMint: process.env.AGENT_CURRENCY_MINT || 'So11111111111111111111111111111111111111112', // wSOL
+  agentFeeCollectIntervalMs: parseInt(process.env.AGENT_FEE_COLLECT_INTERVAL_MS || '600000', 10), // 10min
 
   // Helius
   heliusApiKey: process.env.HELIUS_API_KEY || '',

@@ -149,7 +149,7 @@ async function main() {
   // Start creator fee collection if agent token is configured
   if (feeCollector.isConfigured()) {
     feeCollector.start();
-    logger.info(`[MemeScope] Creator fee collector active (${config.agentBuybackBps / 100}% buyback)`);
+    logger.info(`[MemeScope] Creator fee collector active (every ${config.agentFeeCollectIntervalMs / 1000}s)`);
   } else {
     logger.info('[MemeScope] No AGENT_TOKEN_MINT — fee collector disabled');
   }

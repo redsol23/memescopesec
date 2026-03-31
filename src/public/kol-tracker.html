@@ -106,20 +106,15 @@
       </tr></thead><tbody id="analysis-table-body"></tbody></table></div>
     </div>
 
-    <!-- Agent Token Stats -->
+    <!-- Creator Fees -->
     <div class="card mb-8" id="agent-section" style="display:none">
       <div class="flex items-center justify-between p-4 border-b border-slate-700">
-        <h2 class="text-lg font-semibold text-white">Agent Token</h2>
-        <button onclick="collectFees()" class="btn-primary text-sm">Collect Fees Now</button>
+        <h2 class="text-lg font-semibold text-white">Creator Fee Collection</h2>
+        <button onclick="collectFees()" class="btn-primary text-sm">Claim Now</button>
       </div>
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 p-4">
-        <div><div class="stat-label">Buyback Split</div><div class="text-white font-bold" id="agent-buyback">--</div></div>
-        <div><div class="stat-label">Payment Vault</div><div class="text-white font-bold" id="agent-payment">--</div></div>
-        <div><div class="stat-label">Buyback Vault</div><div class="text-white font-bold" id="agent-buyback-vault">--</div></div>
-        <div><div class="stat-label">Withdraw Vault</div><div class="text-white font-bold" id="agent-withdraw">--</div></div>
-      </div>
-      <div class="px-4 pb-3">
-        <span class="text-xs text-slate-500">Token: <span id="agent-mint" class="font-mono">--</span></span>
+      <div class="grid grid-cols-2 gap-4 p-4">
+        <div><div class="stat-label">Creator Vault</div><div class="text-white font-bold" id="agent-vault">--</div></div>
+        <div><div class="stat-label">Token</div><div class="font-mono text-xs text-slate-400" id="agent-mint">--</div></div>
       </div>
     </div>
 
@@ -164,7 +159,7 @@
     function gradeColor(g){return{A:'text-green-400',B:'text-blue-400',C:'text-yellow-400',D:'text-orange-400',F:'text-red-400'}[g]||'text-slate-400'}
     function flagBadges(flags){if(!flags||!flags.length)return'<span class="text-green-400 text-xs">None</span>';return flags.map(f=>{const c=f.severity==='high'?'bg-red-900 text-red-300':f.severity==='medium'?'bg-yellow-900 text-yellow-300':'bg-slate-700 text-slate-300';return`<span class="badge ${c}" title="${f.description}&#10;${f.evidence}">${f.type.replace(/_/g,' ')}</span>`}).join(' ')}
     async function runAnalysis(){document.getElementById('analysis-summary').textContent='Analyzing...';try{const r=await fetch(API+'/api/analysis');if(!r.ok){document.getElementById('analysis-summary').textContent='Analysis failed';return}const d=await r.json();const s=d.summary;document.getElementById('analysis-summary').innerHTML=`<div class="grid grid-cols-2 md:grid-cols-4 gap-4"><div><div class="stat-label">KOLs Analyzed</div><div class="text-white font-bold">${s.totalKols}</div></div><div><div class="stat-label">Avg Trust Score</div><div class="text-white font-bold">${s.avgTrustScore.toFixed(0)}/100</div></div><div><div class="stat-label">Grade Distribution</div><div class="text-xs text-white">${Object.entries(s.gradeDistribution).map(([g,n])=>`<span class="${gradeColor(g)}">${g}:${n}</span>`).join(' ')}</div></div><div><div class="stat-label">Most Suspicious</div><div class="text-xs">${s.topSuspicious.map(k=>`<span class="text-red-400">${k.label} (${k.flags} flags)</span>`).join(', ')||'None'}</div></div></div>`;const tb=document.getElementById('analysis-table-body');document.getElementById('analysis-table-wrap').style.display='';tb.innerHTML=d.analyses.map(a=>`<tr><td class="font-medium text-white">${a.label}</td><td class="${gradeColor(a.trustGrade)} font-bold text-lg">${a.trustGrade}</td><td><div class="flex items-center gap-2"><div class="w-16 h-2 bg-slate-700 rounded-full overflow-hidden"><div class="h-full rounded-full ${a.trustScore>=65?'bg-green-500':a.trustScore>=40?'bg-yellow-500':'bg-red-500'}" style="width:${a.trustScore}%"></div></div><span class="text-xs">${a.trustScore}</span></div></td><td>${a.winRate.toFixed(0)}%</td><td class="text-xs">${a.avgHoldMinutes.toFixed(0)}m</td><td class="text-xs ${a.avgDumpSpeedMinutes<30?'text-red-400':''}">${a.avgDumpSpeedMinutes.toFixed(0)}m</td><td class="${a.bagHolderScore>50?'text-red-400':''}">${a.bagHolderScore.toFixed(0)}%</td><td>${flagBadges(a.redFlags)}</td></tr>`).join('')}catch(e){document.getElementById('analysis-summary').textContent='Error: '+e}}
-    async function fetchAgentStats(){try{const r=await fetch(API+'/api/agent/stats');if(!r.ok)return;const s=await r.json();if(!s.configured)return;document.getElementById('agent-section').style.display='';document.getElementById('agent-buyback').textContent=(s.buybackBps/100)+'% buyback';document.getElementById('agent-payment').textContent=s.paymentVault||'0';document.getElementById('agent-buyback-vault').textContent=s.buybackVault||'0';document.getElementById('agent-withdraw').textContent=s.withdrawVault||'0';document.getElementById('agent-mint').textContent=s.tokenMint?s.tokenMint.slice(0,8)+'...'+s.tokenMint.slice(-4):'--'}catch(e){}}
+    async function fetchAgentStats(){try{const r=await fetch(API+'/api/agent/stats');if(!r.ok)return;const s=await r.json();if(!s.configured)return;document.getElementById('agent-section').style.display='';document.getElementById('agent-vault').textContent=(s.creatorVaultSOL||0).toFixed(6)+' SOL';document.getElementById('agent-mint').textContent=s.tokenMint?s.tokenMint.slice(0,8)+'...'+s.tokenMint.slice(-4):'--'}catch(e){}}
     async function collectFees(){try{const r=await fetch(API+'/api/agent/collect',{method:'POST'});const d=await r.json();if(d.withdrawn)alert('Collected! Withdrawn: '+(d.withdrawnAmount||0).toFixed(6));else alert('Collection: '+(d.error||'nothing to collect'));fetchAgentStats()}catch(e){alert('Error: '+e)}}
     function refreshAll(){fetchStats();fetchKols();fetchOpenPositions();fetchRecentTrades();fetchAgentStats()}
     refreshAll();fetchHealth();setInterval(refreshAll,5000);setInterval(fetchHealth,30000);

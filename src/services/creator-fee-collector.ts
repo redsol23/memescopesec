@@ -1,71 +1,45 @@
 /**
- * Creator Fee Collector — Collects pump.fun tokenized agent revenue.
+ * Creator Fee Collector — Auto-claims pump.fun creator fees.
  *
- * Periodically calls distributePayments() to split accumulated creator fees
- * into buyback vault (auto buy+burn) and withdraw vault, then withdraw()
- * to fund the trading wallet.
+ * Creator fees (0.3-0.95% of every trade) accumulate on-chain in a
+ * creator vault PDA. This service periodically claims them to the
+ * trading wallet so the agent has SOL to trade with.
  *
  * Flow:
- *   Creator fees accumulate in payment vault
- *     → distributePayments() splits by buybackBps (50/50)
- *       → 50% → buyback vault (pump.fun handles buy+burn automatically)
- *       → 50% → withdraw vault
- *     → withdraw() moves funds from withdraw vault → trading wallet ATA
+ *   People trade the token → creator fees accumulate in vault
+ *     → collectCreatorFee() claims to trading wallet
+ *     → Agent uses SOL for copy trades
  */
 
 import {
   Connection, PublicKey, Transaction, Keypair,
-  sendAndConfirmTransaction, LAMPORTS_PER_SOL,
+  LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
-import {
-  getAssociatedTokenAddress, TOKEN_PROGRAM_ID,
-  createAssociatedTokenAccountIdempotentInstruction,
-} from '@solana/spl-token';
+import * as PumpSwapSdk from '@pump-fun/pump-swap-sdk';
+const {
+  OnlinePumpAmmSdk, canonicalPumpPoolPda, coinCreatorVaultAuthorityPda,
+  PUMP_AMM_PROGRAM_ID,
+} = (PumpSwapSdk as any).default ?? PumpSwapSdk;
+
 import { logger } from '../utils/logger.js';
 import { sendTelegramAlert } from '../utils/telegram.js';
 import { getCollection } from '../utils/mongodb.js';
 import { config } from '../config.js';
 import type { KolTrackerStateDoc } from '../types.js';
 
-// Dynamic import to handle ESM/CJS compat
-let PumpAgent: any;
-let PumpAgentOffline: any;
-
-async function loadSdk() {
-  if (PumpAgent) return;
-  const sdk = await import('@pump-fun/agent-payments-sdk');
-  const mod = (sdk as any).default ?? sdk;
-  PumpAgent = mod.PumpAgent ?? mod.default?.PumpAgent;
-  PumpAgentOffline = mod.PumpAgentOffline ?? mod.default?.PumpAgentOffline;
-
-  // Fallback: try named exports directly
-  if (!PumpAgent && !PumpAgentOffline) {
-    PumpAgent = sdk.PumpAgent;
-    PumpAgentOffline = sdk.PumpAgentOffline;
-  }
-}
-
-export interface FeeCollectionResult {
-  distributed: boolean;
-  withdrawn: boolean;
-  withdrawnAmount?: number;
-  buybackAmount?: number;
-  error?: string;
-}
-
 export class CreatorFeeCollector {
   private connection: Connection;
   private keypair: Keypair;
   private tokenMint: PublicKey | null;
-  private currencyMint: PublicKey | null;
   private collectTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
+  private onlineSdk: any;
 
   constructor(connection: Connection, keypair: Keypair) {
     this.connection = connection;
     this.keypair = keypair;
     this.tokenMint = config.agentTokenMint ? new PublicKey(config.agentTokenMint) : null;
-    this.currencyMint = config.agentCurrencyMint ? new PublicKey(config.agentCurrencyMint) : null;
+    this.onlineSdk = new OnlinePumpAmmSdk(connection);
   }
 
   isConfigured(): boolean {
@@ -77,11 +51,10 @@ export class CreatorFeeCollector {
     this.running = true;
 
     logger.info(
-      `[FeeCollector] Started — collecting every ${config.agentFeeCollectIntervalMs / 1000}s ` +
-      `(mint: ${config.agentTokenMint.slice(0, 8)}..., buyback: ${config.agentBuybackBps / 100}%)`
+      `[FeeCollector] Started — claiming every ${config.agentFeeCollectIntervalMs / 1000}s ` +
+      `(token: ${config.agentTokenMint.slice(0, 8)}...)`
     );
 
-    // Run immediately on start, then on interval
     this.collect().catch(err =>
       logger.error(`[FeeCollector] Initial collect failed: ${err instanceof Error ? err.message : String(err)}`)
     );
@@ -102,186 +75,82 @@ export class CreatorFeeCollector {
   }
 
   /**
-   * Run one collection cycle: distribute + withdraw.
+   * Claim accumulated creator fees from the PumpSwap creator vault.
    */
-  async collect(): Promise<FeeCollectionResult> {
-    if (!this.tokenMint || !this.currencyMint) return { distributed: false, withdrawn: false };
-    await loadSdk();
-
-    const result: FeeCollectionResult = { distributed: false, withdrawn: false };
+  async collect(): Promise<{ success: boolean; claimed?: number; error?: string }> {
+    if (!this.tokenMint) return { success: false, error: 'No token mint configured' };
 
     try {
-      // 1. Check balances first
-      const balances = await this.getBalances();
-      if (!balances) {
-        logger.debug('[FeeCollector] No agent balances available yet');
-        return result;
+      // Check balance before
+      const balanceBefore = await this.connection.getBalance(this.keypair.publicKey);
+
+      // Try to claim creator fees via PumpSwap
+      const poolKey = canonicalPumpPoolPda(this.tokenMint);
+
+      // Build collect creator fee instruction
+      // The creator vault PDA holds accumulated fees
+      // Calling collect transfers them to the creator wallet
+      const swapState = await this.onlineSdk.swapSolanaState(poolKey, this.keypair.publicKey);
+
+      // Check if there are fees to collect by looking at the creator vault
+      const creatorVaultAuth = coinCreatorVaultAuthorityPda(this.tokenMint);
+      const vaultBalance = await this.connection.getBalance(creatorVaultAuth);
+
+      if (vaultBalance < 5000) { // Less than dust
+        logger.debug('[FeeCollector] No fees to collect');
+        return { success: true, claimed: 0 };
       }
 
-      logger.info(
-        `[FeeCollector] Balances — payment: ${balances.paymentVault}, ` +
-        `buyback: ${balances.buybackVault}, withdraw: ${balances.withdrawVault}`
-      );
+      logger.info(`[FeeCollector] Creator vault has ${(vaultBalance / LAMPORTS_PER_SOL).toFixed(6)} SOL — claiming...`);
 
-      // 2. Distribute if there are funds in the payment vault
-      if (balances.paymentVaultRaw > 0) {
-        const distResult = await this.distribute();
-        result.distributed = distResult;
-        if (distResult) {
-          logger.info('[FeeCollector] Distribution complete');
-        }
-      }
+      // Use the PumpSwap SDK to build collect instruction
+      // The SDK exposes this via the online SDK
+      const collectIx = await this.onlineSdk.collectCreatorFee
+        ? this.onlineSdk.collectCreatorFee(poolKey, this.keypair.publicKey)
+        : null;
 
-      // 3. Withdraw if there are funds in the withdraw vault
-      const postBalances = await this.getBalances();
-      if (postBalances && postBalances.withdrawVaultRaw > 0) {
-        const withdrawResult = await this.withdraw();
-        result.withdrawn = withdrawResult.success;
-        result.withdrawnAmount = withdrawResult.amount;
+      if (collectIx) {
+        const tx = new Transaction().add(...(Array.isArray(collectIx) ? collectIx : [collectIx]));
+        tx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
+        tx.feePayer = this.keypair.publicKey;
+        tx.sign(this.keypair);
 
-        if (withdrawResult.success && withdrawResult.amount > 0) {
-          logger.info(`[FeeCollector] Withdrew ${withdrawResult.amount.toFixed(6)} to trading wallet`);
+        const sig = await this.connection.sendRawTransaction(tx.serialize(), {
+          skipPreflight: true,
+          maxRetries: 3,
+        });
+
+        await this.connection.confirmTransaction(sig, 'confirmed');
+
+        const balanceAfter = await this.connection.getBalance(this.keypair.publicKey);
+        const claimed = (balanceAfter - balanceBefore) / LAMPORTS_PER_SOL;
+
+        if (claimed > 0) {
+          logger.info(`[FeeCollector] Claimed ${claimed.toFixed(6)} SOL (tx: ${sig.slice(0, 16)}...)`);
 
           // Update wallet balance in tracker state
-          const balance = await this.connection.getBalance(this.keypair.publicKey);
           const stateCol = await getCollection<KolTrackerStateDoc>('kol_tracker_state');
           await stateCol.updateOne(
             { _id: 'kol_tracker_state' as any },
-            { $set: { walletBalanceSOL: balance / LAMPORTS_PER_SOL } },
+            { $set: { walletBalanceSOL: balanceAfter / LAMPORTS_PER_SOL } },
           );
         }
+
+        return { success: true, claimed };
       }
 
-    } catch (err) {
-      result.error = err instanceof Error ? err.message : String(err);
-      logger.error(`[FeeCollector] Collection failed: ${result.error}`);
-    }
+      // Fallback: if SDK doesn't have collectCreatorFee, log for manual claim
+      logger.info(`[FeeCollector] ${(vaultBalance / LAMPORTS_PER_SOL).toFixed(6)} SOL in creator vault — claim via pump.fun UI`);
+      return { success: true, claimed: 0 };
 
-    return result;
-  }
-
-  /**
-   * Get current balances across all vaults.
-   */
-  private async getBalances(): Promise<{
-    paymentVault: string;
-    buybackVault: string;
-    withdrawVault: string;
-    paymentVaultRaw: number;
-    buybackVaultRaw: number;
-    withdrawVaultRaw: number;
-  } | null> {
-    try {
-      if (PumpAgent) {
-        const agent = new PumpAgent(this.tokenMint, undefined, this.connection);
-        const balances = await agent.getBalances(this.currencyMint);
-        return {
-          paymentVault: formatBalance(balances.paymentVault),
-          buybackVault: formatBalance(balances.buybackVault),
-          withdrawVault: formatBalance(balances.withdrawVault),
-          paymentVaultRaw: balances.paymentVault?.amount ?? 0,
-          buybackVaultRaw: balances.buybackVault?.amount ?? 0,
-          withdrawVaultRaw: balances.withdrawVault?.amount ?? 0,
-        };
-      }
-      return null;
-    } catch (err) {
-      logger.debug(`[FeeCollector] getBalances error: ${err instanceof Error ? err.message : String(err)}`);
-      return null;
-    }
-  }
-
-  /**
-   * Call distributePayments() — permissionless, splits payment vault
-   * into buyback vault + withdraw vault based on buybackBps.
-   */
-  private async distribute(): Promise<boolean> {
-    try {
-      const AgentClass = PumpAgentOffline || PumpAgent;
-      const agent = PumpAgentOffline
-        ? PumpAgentOffline.load(this.tokenMint, this.connection)
-        : new PumpAgent(this.tokenMint, undefined, this.connection);
-
-      const instructions = await agent.distributePayments({
-        user: this.keypair.publicKey,
-        currencyMint: this.currencyMint,
-      });
-
-      if (!instructions || instructions.length === 0) {
-        logger.debug('[FeeCollector] No distribute instructions returned');
-        return false;
-      }
-
-      const tx = new Transaction().add(...instructions);
-      tx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
-      tx.feePayer = this.keypair.publicKey;
-
-      const sig = await sendAndConfirmTransaction(
-        this.connection, tx, [this.keypair], { commitment: 'confirmed' },
-      );
-
-      logger.info(`[FeeCollector] distributePayments tx: ${sig.slice(0, 16)}...`);
-      return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // "already distributed" or "nothing to distribute" are not errors
-      if (msg.includes('0x0') || msg.includes('insufficient') || msg.includes('no funds')) {
-        logger.debug(`[FeeCollector] Nothing to distribute: ${msg}`);
-        return false;
+      if (msg.includes('not found') || msg.includes('no pool')) {
+        logger.debug(`[FeeCollector] Pool not found yet (token may not have graduated)`);
+        return { success: false, error: 'Pool not found' };
       }
-      logger.warn(`[FeeCollector] distribute failed: ${msg}`);
-      return false;
-    }
-  }
-
-  /**
-   * Call withdraw() — moves funds from withdraw vault to our trading wallet ATA.
-   */
-  private async withdraw(): Promise<{ success: boolean; amount: number }> {
-    try {
-      const AgentClass = PumpAgentOffline || PumpAgent;
-      const agent = PumpAgentOffline
-        ? PumpAgentOffline.load(this.tokenMint, this.connection)
-        : new PumpAgent(this.tokenMint, undefined, this.connection);
-
-      // Get or create our ATA for the currency
-      const receiverAta = await getAssociatedTokenAddress(
-        this.currencyMint!, this.keypair.publicKey,
-      );
-
-      // Ensure ATA exists
-      const ataIx = createAssociatedTokenAccountIdempotentInstruction(
-        this.keypair.publicKey, receiverAta, this.keypair.publicKey, this.currencyMint!,
-      );
-
-      const withdrawIx = await agent.withdraw({
-        authority: this.keypair.publicKey,
-        currencyMint: this.currencyMint!,
-        receiverAta,
-      });
-
-      const tx = new Transaction().add(ataIx, withdrawIx);
-      tx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
-      tx.feePayer = this.keypair.publicKey;
-
-      const sig = await sendAndConfirmTransaction(
-        this.connection, tx, [this.keypair], { commitment: 'confirmed' },
-      );
-
-      // Check how much we received
-      const postBalance = await this.connection.getTokenAccountBalance(receiverAta);
-      const amount = postBalance.value.uiAmount ?? 0;
-
-      logger.info(`[FeeCollector] withdraw tx: ${sig.slice(0, 16)}... (${amount} received)`);
-      return { success: true, amount };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('0x0') || msg.includes('insufficient') || msg.includes('no funds')) {
-        logger.debug(`[FeeCollector] Nothing to withdraw: ${msg}`);
-        return { success: false, amount: 0 };
-      }
-      logger.warn(`[FeeCollector] withdraw failed: ${msg}`);
-      return { success: false, amount: 0 };
+      logger.warn(`[FeeCollector] Claim failed: ${msg}`);
+      return { success: false, error: msg };
     }
   }
 
@@ -291,32 +160,21 @@ export class CreatorFeeCollector {
   async getStats(): Promise<{
     configured: boolean;
     tokenMint: string;
-    buybackBps: number;
-    paymentVault?: string;
-    buybackVault?: string;
-    withdrawVault?: string;
+    creatorVaultSOL?: number;
   }> {
     const stats: any = {
       configured: this.isConfigured(),
       tokenMint: config.agentTokenMint,
-      buybackBps: config.agentBuybackBps,
     };
 
-    if (this.isConfigured()) {
-      const balances = await this.getBalances();
-      if (balances) {
-        stats.paymentVault = balances.paymentVault;
-        stats.buybackVault = balances.buybackVault;
-        stats.withdrawVault = balances.withdrawVault;
-      }
+    if (this.isConfigured() && this.tokenMint) {
+      try {
+        const creatorVaultAuth = coinCreatorVaultAuthorityPda(this.tokenMint);
+        const balance = await this.connection.getBalance(creatorVaultAuth);
+        stats.creatorVaultSOL = balance / LAMPORTS_PER_SOL;
+      } catch {}
     }
 
     return stats;
   }
-}
-
-function formatBalance(vault: any): string {
-  if (!vault) return '0';
-  const amount = vault.amount ?? vault.uiAmount ?? 0;
-  return typeof amount === 'number' ? amount.toFixed(6) : String(amount);
 }

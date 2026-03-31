@@ -10,7 +10,6 @@
     "dev": "tsx src/index.ts"
   },
   "dependencies": {
-    "@pump-fun/agent-payments-sdk": "^3.0.2",
     "@pump-fun/pump-swap-sdk": "^1.14.0",
     "@solana/spl-token": "^0.4.8",
     "@solana/web3.js": "^1.95.4",
