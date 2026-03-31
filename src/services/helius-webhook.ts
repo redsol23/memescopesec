@@ -205,6 +205,7 @@ export class HeliusWebhookManager {
         webhookURL: webhookUrl,
         accountAddresses: addresses,
         transactionTypes: ['ANY'],
+        webhookType: 'enhanced',
       }),
     });
 
